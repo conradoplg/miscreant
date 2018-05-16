@@ -183,6 +183,33 @@ func TestAESCMACSIVAppend(t *testing.T) {
 	}
 }
 
+func TestAESCMACSIVInPlace(t *testing.T) {
+	v := loadAESSIVExamples("aes_siv.tjson")[0]
+
+	c, err := NewAESCMACSIV(v.key)
+	if err != nil {
+		t.Fatalf("NewAESCMACSIV: %s", err)
+	}
+	pt := make([]byte, len(v.plaintext), len(v.plaintext)+c.Overhead())
+	copy(pt, v.plaintext)
+	ct, err := c.Seal(pt[:0], pt, v.ad...)
+	if err != nil {
+		t.Errorf("Seal: %s", err)
+	}
+	if !bytes.Equal(v.ciphertext, ct) {
+		t.Errorf("Seal: expected: %x\ngot: %x", v.ciphertext, ct)
+	}
+
+	copy(ct, v.ciphertext)
+	pt, err = c.Open(ct[:0], ct, v.ad...)
+	if err != nil {
+		t.Errorf("Open: %s", err)
+	}
+	if !bytes.Equal(v.plaintext, pt) {
+		t.Errorf("Open: expected: %x\ngot: %x", v.plaintext, pt)
+	}
+}
+
 func BenchmarkSIVAES128_Seal_1K(b *testing.B) {
 	a := make([]byte, 64)
 	m := make([]byte, 1024)

@@ -31,6 +31,17 @@ var (
 	ErrTooManyAssociatedDataItems = errors.New("siv: too many associated data items")
 )
 
+// copyIfOverlapped returns a copy of the source if it overlaps entirely
+// with dst, otherwise returns source.
+func copyIfOverlapped(dst, source []byte) []byte {
+	if cap(dst) != 0 && cap(source) != 0 && &dst[:1][0] == &source[:1][0] {
+		t := make([]byte, len(source))
+		copy(t, source)
+		return t
+	}
+	return source
+}
+
 // Cipher is an instance of AES-SIV, configured with either AES-CMAC or
 // AES-PMAC as a message authentication code.
 type Cipher struct {
@@ -113,6 +124,9 @@ func (c *Cipher) Seal(dst []byte, plaintext []byte, data ...[]byte) ([]byte, err
 		return nil, ErrTooManyAssociatedDataItems
 	}
 
+	// Not possible to Seal in-place; copy if necessary
+	plaintext = copyIfOverlapped(dst, plaintext)
+
 	// Authenticate
 	iv := c.s2v(data, plaintext)
 	ret, out := sliceForAppend(dst, len(iv)+len(plaintext))
@@ -141,6 +155,9 @@ func (c *Cipher) Open(dst []byte, ciphertext []byte, data ...[]byte) ([]byte, er
 	if len(ciphertext) < c.Overhead() {
 		return nil, ErrNotAuthentic
 	}
+
+	// Not possible to Open in-place; copy if necessary
+	ciphertext = copyIfOverlapped(dst, ciphertext)
 
 	// Decrypt
 	iv := c.tmp1[:c.Overhead()]
