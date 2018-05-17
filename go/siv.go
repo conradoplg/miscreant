@@ -31,6 +31,11 @@ var (
 	ErrTooManyAssociatedDataItems = errors.New("siv: too many associated data items")
 )
 
+//areAliased returns if two slices are exactly aliased
+func areAliased(dst, source []byte) bool {
+	return cap(dst) != 0 && cap(source) != 0 && &dst[:1][0] == &source[:1][0]
+}
+
 // Cipher is an instance of AES-SIV, configured with either AES-CMAC or
 // AES-PMAC as a message authentication code.
 type Cipher struct {
@@ -112,16 +117,28 @@ func (c *Cipher) Seal(dst []byte, plaintext []byte, data ...[]byte) ([]byte, err
 	if len(data) > MaxAssociatedDataItems {
 		return nil, ErrTooManyAssociatedDataItems
 	}
+	aliased := areAliased(dst, plaintext)
 
 	// Authenticate
 	iv := c.s2v(data, plaintext)
 	ret, out := sliceForAppend(dst, len(iv)+len(plaintext))
-	copy(out, iv)
+	if aliased {
+		copy(out[len(out)-len(iv):], iv)
+	} else {
+		copy(out, iv)
+	}
 
 	// Encrypt
 	zeroIVBits(iv)
 	ctr := cipher.NewCTR(c.b, iv)
-	ctr.XORKeyStream(out[len(iv):], plaintext)
+	if aliased {
+		ctr.XORKeyStream(out, plaintext)
+		copy(iv, out[len(out)-len(iv):])
+		copy(out[len(iv):], out)
+		copy(out, iv)
+	} else {
+		ctr.XORKeyStream(out[len(iv):], plaintext)
+	}
 
 	return ret, nil
 }
@@ -141,18 +158,25 @@ func (c *Cipher) Open(dst []byte, ciphertext []byte, data ...[]byte) ([]byte, er
 	if len(ciphertext) < c.Overhead() {
 		return nil, ErrNotAuthentic
 	}
+	aliased := areAliased(dst, ciphertext)
 
 	// Decrypt
 	iv := c.tmp1[:c.Overhead()]
 	copy(iv, ciphertext)
 	zeroIVBits(iv)
 	ctr := cipher.NewCTR(c.b, iv)
+	copy(iv, ciphertext)
 	ret, out := sliceForAppend(dst, len(ciphertext)-len(iv))
-	ctr.XORKeyStream(out, ciphertext[len(iv):])
+	if aliased {
+		copy(ciphertext, ciphertext[len(iv):])
+		ctr.XORKeyStream(out, ciphertext[:len(ciphertext)-len(iv)])
+	} else {
+		ctr.XORKeyStream(out, ciphertext[len(iv):])
+	}
 
 	// Authenticate
 	expected := c.s2v(data, out)
-	if subtle.ConstantTimeCompare(ciphertext[:len(iv)], expected) != 1 {
+	if subtle.ConstantTimeCompare(iv, expected) != 1 {
 		return nil, ErrNotAuthentic
 	}
 	return ret, nil
